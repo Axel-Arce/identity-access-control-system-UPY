@@ -1,13 +1,17 @@
+import hashlib
 import sqlite3
 
 DB_NAME = "users.db"
 
+def hash_password(password: str) -> str:
+    """Hashes a plaintext password using SHA-256."""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
 def initialize_database():
-    """Initializes the SQLite database and creates the users table if it does not exist."""
+    #Initializes the SQLite database and creates the users table if it does not exist.
     connection = sqlite3.connect(DB_NAME)
     cursor = connection.cursor()
 
-    # Create the users table schema
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,11 +28,11 @@ def initialize_database():
     print("[INFO] Database initialized successfully.")
 
 def seed_users():
-    """Populates the database with initial dummy users for testing."""
+    #Populates the database with initial users with hashed passwords.
     sample_users = [
-        ("Admin User", "admin@example.com", "Admin", "192.168.1.100", "placeholder_hash_admin"),
-        ("Operator User", "operator@example.com", "Operator", "192.168.1.101", "placeholder_hash_operator"),
-        ("Viewer User", "viewer@example.com", "Viewer", "192.168.1.102", "placeholder_hash_viewer")
+        ("Admin User", "admin@example.com", "Admin", "192.168.1.100", hash_password("Admin123!")),
+        ("Operator User", "operator@example.com", "Operator", "192.168.1.101", hash_password("Operator123!")),
+        ("Viewer User", "viewer@example.com", "Viewer", "192.168.1.102", hash_password("Viewer123!"))
     ]
 
     connection = sqlite3.connect(DB_NAME)
@@ -41,7 +45,6 @@ def seed_users():
                 VALUES (?, ?, ?, ?, ?)
             ''', user)
         except sqlite3.IntegrityError:
-            # Skip insertion if email already exists
             pass
 
     connection.commit()
@@ -49,7 +52,7 @@ def seed_users():
     print("[INFO] Initial users seeded successfully.")
 
 def fetch_all_users():
-    """Retrieves and displays all registered users from the database."""
+    #Retrieves and displays all registered users from the database.
     connection = sqlite3.connect(DB_NAME)
     cursor = connection.cursor()
 
