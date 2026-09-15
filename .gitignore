@@ -1,0 +1,12 @@
+# Database
+*.db
+users.db
+
+# Environments & Cache
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# IDE settings
+.vscode/
