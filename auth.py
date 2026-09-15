@@ -39,7 +39,7 @@ def verify_credentials(email, password) -> dict | None:
 
 def login_prompt():
     #CLI Prompt for user authentication.
-    print("\n=== SECURE SYSTEM LOGIN ===")
+    print("\n=== SYSTEM LOGIN ===")
     email = input("User (Email): ").strip()
     password = input("Password: ").strip()
 
