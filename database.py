@@ -1,14 +1,19 @@
 import hashlib
 import os
-import sqlite3
 
+import psycopg2
+import psycopg2.errors
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_NAME = "users.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 FERNET_PHONE_KEY = os.getenv("FERNET_PHONE_KEY")
+
+def get_connection():
+    """Opens a new connection to the shared Postgres (Supabase) database."""
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 def hash_password(password: str) -> str:
     """Hashes a plaintext password using SHA-256."""
@@ -20,13 +25,13 @@ def encrypt_phone(phone_number: str) -> str:
     return fernet.encrypt(phone_number.encode('utf-8')).decode('utf-8')
 
 def initialize_database():
-    #Initializes the SQLite database and creates the users table if it does not exist.
-    connection = sqlite3.connect(DB_NAME)
+    #Creates the users table in the shared database if it does not exist.
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             email TEXT UNIQUE NOT NULL,
             role TEXT NOT NULL,
@@ -35,12 +40,6 @@ def initialize_database():
             phone_encrypted TEXT
         )
     ''')
-
-    # Migrate older databases that predate the phone_encrypted column
-    cursor.execute("PRAGMA table_info(users)")
-    existing_columns = {row[1] for row in cursor.fetchall()}
-    if "phone_encrypted" not in existing_columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN phone_encrypted TEXT")
 
     connection.commit()
     connection.close()
@@ -54,20 +53,21 @@ def seed_users():
         ("Viewer User", "viewer@example.com", "Viewer", "192.168.1.102", hash_password("Viewer123!"), encrypt_phone("+10000000003"))
     ]
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = get_connection()
     cursor = connection.cursor()
 
     for name, email, role, camera_ip, password_hash, phone_encrypted in sample_users:
         try:
             cursor.execute('''
                 INSERT INTO users (name, email, role, camera_ip, password_hash, phone_encrypted)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
             ''', (name, email, role, camera_ip, password_hash, phone_encrypted))
-        except sqlite3.IntegrityError:
+        except psycopg2.errors.UniqueViolation:
             # User already exists (e.g. migrated from an older schema); backfill the phone if missing
+            connection.rollback()
             cursor.execute('''
-                UPDATE users SET phone_encrypted = ?
-                WHERE email = ? AND phone_encrypted IS NULL
+                UPDATE users SET phone_encrypted = %s
+                WHERE email = %s AND phone_encrypted IS NULL
             ''', (phone_encrypted, email))
 
     connection.commit()
@@ -76,18 +76,19 @@ def seed_users():
 
 def create_user(name: str, email: str, role: str, camera_ip: str, password: str, phone_number: str) -> bool:
     """Registers a new user. Returns True on success, False if the email already exists."""
-    connection = sqlite3.connect(DB_NAME)
+    connection = get_connection()
     cursor = connection.cursor()
 
     try:
         cursor.execute('''
             INSERT INTO users (name, email, role, camera_ip, password_hash, phone_encrypted)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s)
         ''', (name, email, role, camera_ip, hash_password(password), encrypt_phone(phone_number)))
         connection.commit()
         print(f"[INFO] User '{email}' created successfully.")
         return True
-    except sqlite3.IntegrityError:
+    except psycopg2.errors.UniqueViolation:
+        connection.rollback()
         print(f"[ERROR] A user with email '{email}' already exists.")
         return False
     finally:
@@ -95,9 +96,9 @@ def create_user(name: str, email: str, role: str, camera_ip: str, password: str,
 
 def get_user_by_email(email: str) -> dict | None:
     """Fetches a single user's non-sensitive fields by email."""
-    connection = sqlite3.connect(DB_NAME)
+    connection = get_connection()
     cursor = connection.cursor()
-    cursor.execute("SELECT id, name, email, role, camera_ip FROM users WHERE email = ?", (email,))
+    cursor.execute("SELECT id, name, email, role, camera_ip FROM users WHERE email = %s", (email,))
     row = cursor.fetchone()
     connection.close()
 
@@ -127,10 +128,10 @@ def update_user_name(email: str, new_name: str) -> bool:
 
 def _update_user_field(email: str, column: str, value: str, label: str) -> bool:
     #Internal helper: overwrites a single column for the user matching the given email.
-    connection = sqlite3.connect(DB_NAME)
+    connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute(f"UPDATE users SET {column} = ? WHERE email = ?", (value, email))
+    cursor.execute(f"UPDATE users SET {column} = %s WHERE email = %s", (value, email))
     updated = cursor.rowcount > 0
 
     if updated:
@@ -144,7 +145,7 @@ def _update_user_field(email: str, column: str, value: str, label: str) -> bool:
 
 def fetch_all_users():
     #Retrieves and displays all registered users from the database.
-    connection = sqlite3.connect(DB_NAME)
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("SELECT id, name, email, role, camera_ip, password_hash FROM users")

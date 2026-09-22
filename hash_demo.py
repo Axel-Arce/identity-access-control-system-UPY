@@ -1,7 +1,6 @@
 import hashlib
-import sqlite3
 
-DB_NAME = "users.db"
+from database import get_connection
 
 def hash_password(password):
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
@@ -13,7 +12,7 @@ def demostrate_hashing_process(sample_password):
     password_hash = hash_password(sample_password)
     print(f"[2] SHA-256 Calculated Hash    : {password_hash}")
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = get_connection()
     cursor = connection.cursor()
     cursor.execute("SELECT email, password_hash FROM users LIMIT 1")
     row = cursor.fetchone()

@@ -1,7 +1,7 @@
 import hashlib
 import os
-import sqlite3
 
+import psycopg2
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from twilio.rest import Client
@@ -9,7 +9,7 @@ from twilio.base.exceptions import TwilioRestException
 
 load_dotenv()
 
-DB_NAME = "users.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
@@ -29,14 +29,14 @@ def verify_credentials(email, password) -> dict | None:
     """
     hashed_input = hash_password(password)
 
-    connection = sqlite3.connect(DB_NAME)
+    connection = psycopg2.connect(DATABASE_URL, sslmode="require")
     cursor = connection.cursor()
 
     # Query user by email and matching password hash
     cursor.execute('''
         SELECT id, name, email, role, camera_ip, phone_encrypted
         FROM users
-        WHERE email = ? AND password_hash = ?
+        WHERE email = %s AND password_hash = %s
     ''', (email, hashed_input))
 
     user_row = cursor.fetchone()
