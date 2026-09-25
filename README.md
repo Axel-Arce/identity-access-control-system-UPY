@@ -1,13 +1,18 @@
 # Identity and Access Control Management System
 
-Modular Python prototype implementing authentication, identity protection, and role-based access control.
+A comprehensive identity management, Role-Based Access Control (RBAC), and real-time IP camera monitoring system. Developed in Python with a cybersecurity-oriented architecture, featuring sensitive data encryption in SQLite, Multi-Factor Authentication (TOTP 2FA), and secure credential hashing.
 
-## Project Modules
-- [x] Environment Setup & Version Control (Git)
-- [x] Module 1: User Database (SQLite)
-- [x] Module 2: Authentication
-- [x] Module 3: Password Hashing
-- [ ] Module 4: Two-Factor Authentication (2FA)
-- [ ] Module 5: Data Encryption
-- [ ] Module 6: Role-Based Access Control (RBAC)
-- [ ] Module 7: IP Camera Streaming Integration
+---
+
+## Project Structure
+
+```text
+Proyecto_U1/
+│
+├── main.py            # Application entry point and primary user interface
+├── database.py        # Controller and operations for the SQLite database (usuarios.db)
+├── security.py        # Cryptographic logic (bcrypt hashing, AES encryption, TOTP generation)
+├── camera.py          # IP Camera integration and streaming rendering module (OpenCV)
+├── usuarios.db        # SQLite database file
+├── requirements.txt   # Required Python dependencies
+└── README.md          # General repository documentation
