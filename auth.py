@@ -1,22 +1,21 @@
 import hashlib
 import os
+import random
+import smtplib
+import time
+from email.mime.text import MIMEText
 
 import psycopg2
-from cryptography.fernet import Fernet
 from dotenv import load_dotenv
-from twilio.rest import Client
-from twilio.base.exceptions import TwilioRestException
 
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+SMTP_SENDER   = os.getenv("SMTP_SENDER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_VERIFY_SERVICE_SID = os.getenv("TWILIO_VERIFY_SERVICE_SID")
-FERNET_PHONE_KEY = os.getenv("FERNET_PHONE_KEY")
-
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+MAX_ATTEMPTS = 3
+CODE_EXPIRY  = 300  # seconds
 
 def hash_password(password):
     #Hashes a plaintext password using SHA-256.
@@ -32,9 +31,8 @@ def verify_credentials(email, password) -> dict | None:
     connection = psycopg2.connect(DATABASE_URL, sslmode="require")
     cursor = connection.cursor()
 
-    # Query user by email and matching password hash
     cursor.execute('''
-        SELECT id, name, email, role, camera_ip, phone_encrypted
+        SELECT id, name, email, role, camera_ip
         FROM users
         WHERE email = %s AND password_hash = %s
     ''', (email, hashed_input))
@@ -44,50 +42,40 @@ def verify_credentials(email, password) -> dict | None:
 
     if user_row:
         return {
-            "id": user_row[0],
-            "name": user_row[1],
-            "email": user_row[2],
-            "role": user_row[3],
+            "id":        user_row[0],
+            "name":      user_row[1],
+            "email":     user_row[2],
+            "role":      user_row[3],
             "camera_ip": user_row[4],
-            "phone_encrypted": user_row[5]
         }
     return None
 
-def decrypt_phone(phone_encrypted: str) -> str:
-    #Decrypts a user's phone number stored in the database.
-    fernet = Fernet(FERNET_PHONE_KEY.encode('utf-8'))
-    return fernet.decrypt(phone_encrypted.encode('utf-8')).decode('utf-8')
-
-def otp_request(phone_number) -> bool:
-    #Sends a one-time SMS verification code via Twilio Verify.
+def send_otp_email(recipient_email, code):
+    #Sends a 6-digit OTP code to the user's registered email via Gmail SMTP.
     try:
-        print(f"\n[MFA] Sending verification code via SMS to {phone_number}")
-        twilio_client.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verifications.create(
-            to=phone_number, channel='sms'
+        msg = MIMEText(
+            f"Your verification code is: {code}\n\n"
+            f"This code expires in {CODE_EXPIRY // 60} minutes.\n"
+            f"If you did not request this, please ignore this email."
         )
+        msg["Subject"] = f"Verification Code: {code}"
+        msg["From"]    = SMTP_SENDER
+        msg["To"]      = recipient_email
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(SMTP_SENDER, SMTP_PASSWORD)
+            server.sendmail(SMTP_SENDER, recipient_email, msg.as_string())
+
+        print(f"\n[MFA] Verification code sent to {recipient_email}")
         return True
-    except TwilioRestException as error:
-        print(f"[ERROR] Twilio send error (code: {error.code}): {error.msg}")
-        return False
-
-def otp_verification(phone_number, entered_code) -> bool:
-    #Validates the code entered by the user against Twilio Verify.
-    try:
-        check = twilio_client.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verification_checks.create(
-            to=phone_number, code=entered_code
-        )
-        if check.status == "approved":
-            return True
-        print(f"[ERROR] Incorrect or expired code (status: {check.status})")
-        return False
-    except TwilioRestException as error:
-        print(f"[ERROR] Verification error ({error.code}): {error.msg}")
+    except Exception as error:
+        print(f"[ERROR] Could not send email: {error}")
         return False
 
 def login_prompt():
-    #CLI Prompt for user authentication with Twilio 2FA.
+    #CLI Prompt for user authentication with email-based 2FA.
     print("\n=== SYSTEM LOGIN ===")
-    email = input("User (Email): ").strip()
+    email    = input("User (Email): ").strip()
     password = input("Password: ").strip()
 
     user = verify_credentials(email, password)
@@ -98,29 +86,31 @@ def login_prompt():
 
     print(f"\n[SUCCESS] Password verified. Welcome, {user['name']}!")
 
-    if not user.get("phone_encrypted"):
-        print("[ERROR] No phone number registered for 2FA. Access denied.")
-        return None
+    code         = random.randint(100000, 999999)
+    generated_at = time.time()
 
-    try:
-        phone_number = decrypt_phone(user["phone_encrypted"])
-    except Exception as error:
-        print(f"[ERROR] Could not decrypt registered phone number: {error}")
-        return None
-
-    if not otp_request(phone_number):
+    if not send_otp_email(email, code):
         print("[ERROR] Could not send the 2FA code. Access denied.")
         return None
 
-    otp_code = input("Enter the 6-digit code sent to your phone: ").strip()
+    attempts = 0
+    while attempts < MAX_ATTEMPTS:
+        if time.time() - generated_at > CODE_EXPIRY:
+            print("\n[ACCESS DENIED] Verification code expired.")
+            return None
 
-    if not otp_verification(phone_number, otp_code):
-        print("\n[ACCESS DENIED] Incorrect or expired 2FA code.")
-        return None
+        entered = input("Enter the 6-digit code sent to your email: ").strip()
 
-    print("\n[SUCCESS] Two-factor authentication complete.")
-    print(f"[INFO] Assigned Role: {user['role']}")
-    return user
+        if entered.isdigit() and int(entered) == code:
+            print("\n[SUCCESS] Two-factor authentication complete.")
+            print(f"[INFO] Assigned Role: {user['role']}")
+            return user
+
+        attempts += 1
+        print(f"[ERROR] Incorrect code. Attempt {attempts}/{MAX_ATTEMPTS}.")
+
+    print("\n[ACCESS DENIED] Too many incorrect attempts.")
+    return None
 
 if __name__ == "__main__":
     login_prompt()

@@ -1,7 +1,3 @@
-"""
-Interactive CLI script to register a new user in the database.
-"""
-
 import database
 
 def register_prompt():
